@@ -92,27 +92,28 @@ export async function checkMcpConnection() {
   }
 
   // 2. Check Financial Markets Data - Financial Modeling Prep MCP Server
-  // Key is required; never hardcoded, dynamically read from environment variable
+  // Key is required; uses free tier /v3/quote/AAPL endpoint (250 req/day limit)
   const fmpApiKey = process.env.FMP_API_KEY || process.env.FINANCIAL_MODELING_PREP_API_KEY;
   const fmpStart = Date.now();
 
   if (!fmpApiKey) {
-    // No hardcoded key fallback; report key required status so user can provide it manually
+    // No hardcoded key; report key required status so user can provide it manually in Vercel
     results.servers.fmp = {
       name: MCP_SERVERS.fmp.name,
       smitheryUrl: MCP_SERVERS.fmp.smitheryUrl,
       keyRequired: true,
       keyConfigured: false,
+      tier: 'Free Tier (250 calls/day)',
       status: 'key_required',
       latencyMs: 0,
       tools: MCP_SERVERS.fmp.tools,
-      details: 'API key required. Set FMP_API_KEY in environment variables to enable live authenticated queries.',
+      details: 'FMP API key required for live data. Set FMP_API_KEY in Vercel Environment Variables.',
       lastPing: new Date().toLocaleTimeString()
     };
   } else {
-    // User has manually configured their FMP API key
+    // User has manually configured their FMP API key -> verify with Free Tier quote endpoint
     try {
-      const fmpRes = await fetch(`${MCP_SERVERS.fmp.apiEndpoint}/stock/list?apikey=${encodeURIComponent(fmpApiKey)}`, {
+      const fmpRes = await fetch(`${MCP_SERVERS.fmp.apiEndpoint}/quote/AAPL?apikey=${encodeURIComponent(fmpApiKey)}`, {
         method: 'GET',
         headers: { 'Accept': 'application/json' },
         signal: AbortSignal.timeout(4000)
@@ -126,11 +127,12 @@ export async function checkMcpConnection() {
         smitheryUrl: MCP_SERVERS.fmp.smitheryUrl,
         keyRequired: true,
         keyConfigured: true,
+        tier: 'Free Tier (250 calls/day)',
         status: isFmpOk ? 'connected' : (fmpRes?.status === 401 || fmpRes?.status === 403 ? 'invalid_key' : 'connected'),
         latencyMs: fmpLatency,
         tools: MCP_SERVERS.fmp.tools,
         details: isFmpOk
-          ? 'Connected with user-provided FMP API key'
+          ? 'Connected to FMP Free Tier (/v3/quote live)'
           : `API key responded with HTTP status ${fmpRes?.status || 'unknown'}`,
         lastPing: new Date().toLocaleTimeString()
       };
@@ -140,6 +142,7 @@ export async function checkMcpConnection() {
         smitheryUrl: MCP_SERVERS.fmp.smitheryUrl,
         keyRequired: true,
         keyConfigured: true,
+        tier: 'Free Tier (250 calls/day)',
         status: 'connected',
         latencyMs: Date.now() - fmpStart,
         tools: MCP_SERVERS.fmp.tools,
@@ -560,6 +563,55 @@ export function generateTop3TradeIdeas({
   });
 
   return top3;
+}
+
+/**
+ * Vercel Serverless Function Handler
+ * Route: /api/mcp
+ */
+export default async function handler(req, res) {
+  try {
+    const status = await checkMcpConnection();
+
+    // Enable CORS
+    if (res && typeof res.setHeader === 'function') {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    }
+
+    if (req && req.method === 'OPTIONS') {
+      return res?.status ? res.status(200).end() : null;
+    }
+
+    const payload = {
+      success: true,
+      service: 'DealHunter X - MCP Integration',
+      data: status,
+      freeTierStatus: {
+        polymarket: '100% Free (No key needed)',
+        fmp: status.servers.fmp?.keyConfigured ? 'FMP Free Tier Active' : 'Key required for FMP'
+      },
+      mcpEndpoints: {
+        polymarket: MCP_SERVERS.polymarket.smitheryUrl,
+        fmp: MCP_SERVERS.fmp.smitheryUrl
+      }
+    };
+
+    if (res && typeof res.status === 'function') {
+      return res.status(200).json(payload);
+    }
+    return payload;
+  } catch (err) {
+    const errPayload = {
+      success: false,
+      error: err?.message || 'Internal MCP Handler Error'
+    };
+    if (res && typeof res.status === 'function') {
+      return res.status(500).json(errPayload);
+    }
+    return errPayload;
+  }
 }
 
 // Standalone self-check execution
