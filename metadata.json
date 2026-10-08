@@ -1,0 +1,6 @@
+{
+  "name": "DealHunter X - AI Trade Ideas",
+  "description": "Daily Top 3 trade ideas tailored to your sectors, risk appetite, and capital. Powered by crowd prediction markets, public signals, and financial modeling.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
